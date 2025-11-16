@@ -1,6 +1,7 @@
 package health
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -196,6 +197,31 @@ func HTTPChecker(name, url string, timeout time.Duration) Checker {
 			Name:   name,
 			Status: StatusUnhealthy,
 			Error:  "non-2xx status code",
+		}
+	}
+}
+
+// Pinger is an interface for components that support ping operations
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+// RateLimiterChecker checks rate limiter storage connectivity
+func RateLimiterChecker(limiter Pinger) Checker {
+	return func() Check {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if err := limiter.Ping(ctx); err != nil {
+			return Check{
+				Name:   "ratelimit",
+				Status: StatusUnhealthy,
+				Error:  err.Error(),
+			}
+		}
+		return Check{
+			Name:   "ratelimit",
+			Status: StatusHealthy,
 		}
 	}
 }
