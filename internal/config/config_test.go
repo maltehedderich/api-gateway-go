@@ -77,13 +77,13 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	// Set environment variables
-	os.Setenv("GATEWAY_HTTP_PORT", "7000")
-	os.Setenv("GATEWAY_LOG_LEVEL", "warn")
-	os.Setenv("GATEWAY_AUTH_ENABLED", "false")
+	_ = os.Setenv("GATEWAY_HTTP_PORT", "7000")
+	_ = os.Setenv("GATEWAY_LOG_LEVEL", "warn")
+	_ = os.Setenv("GATEWAY_AUTH_ENABLED", "false")
 	defer func() {
-		os.Unsetenv("GATEWAY_HTTP_PORT")
-		os.Unsetenv("GATEWAY_LOG_LEVEL")
-		os.Unsetenv("GATEWAY_AUTH_ENABLED")
+		_ = os.Unsetenv("GATEWAY_HTTP_PORT")
+		_ = os.Unsetenv("GATEWAY_LOG_LEVEL")
+		_ = os.Unsetenv("GATEWAY_AUTH_ENABLED")
 	}()
 
 	cfg := &Config{}

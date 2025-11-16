@@ -8,6 +8,7 @@ import (
 	"github.com/maltehedderich/api-gateway-go/internal/config"
 	"github.com/maltehedderich/api-gateway-go/internal/health"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
+	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 	"github.com/maltehedderich/api-gateway-go/internal/server"
 )
 
@@ -39,6 +40,7 @@ func main() {
 	}
 
 	var logOutput *os.File
+	var logFileCloser func()
 	switch cfg.Logging.Output {
 	case "stdout":
 		logOutput = os.Stdout
@@ -51,7 +53,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
 			os.Exit(1)
 		}
-		defer logOutput.Close()
+		logFileCloser = func() {
+			if err := logOutput.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to close log file: %v\n", err)
+			}
+		}
+		defer logFileCloser()
 	}
 
 	logger.Init(logLevel, cfg.Logging.Format, logOutput)
@@ -86,6 +93,14 @@ func main() {
 			continue
 		}
 		logger.Get().SetComponentLevel(component, level)
+	}
+
+	// Initialize metrics if enabled
+	if cfg.Observability.MetricsEnabled {
+		metrics.Init()
+		log.Info("metrics initialized", logger.Fields{
+			"metrics_path": cfg.Observability.MetricsPath,
+		})
 	}
 
 	// Initialize health check manager

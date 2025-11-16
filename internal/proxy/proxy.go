@@ -7,11 +7,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/maltehedderich/api-gateway-go/internal/circuitbreaker"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
+	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 	"github.com/maltehedderich/api-gateway-go/internal/router"
 )
 
@@ -110,19 +112,43 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, match *router.Ma
 
 	// Execute request with circuit breaker protection
 	var resp *http.Response
+	backendStart := time.Now()
 	err = cb.Execute(func() error {
 		var execErr error
 		resp, execErr = p.forwardWithRetry(backendReq)
 		return execErr
 	})
+	backendDuration := time.Since(backendStart)
 
+	// Record backend metrics
 	if err != nil {
 		if err == circuitbreaker.ErrCircuitOpen {
+			metrics.RecordBackendError(match.Route.BackendURL, "circuit_open")
 			return fmt.Errorf("circuit breaker open for backend %s", match.Route.BackendURL)
 		}
+		// Determine error type
+		errorType := "unknown"
+		if err == context.DeadlineExceeded {
+			errorType = "timeout"
+		} else if strings.Contains(err.Error(), "connection refused") {
+			errorType = "connection_refused"
+		} else if strings.Contains(err.Error(), "no such host") {
+			errorType = "dns_error"
+		}
+		metrics.RecordBackendError(match.Route.BackendURL, errorType)
 		return fmt.Errorf("backend request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			p.logger.Warn("error closing response body", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+	}()
+
+	// Record successful backend request
+	statusCode := strconv.Itoa(resp.StatusCode)
+	metrics.RecordBackendRequest(match.Route.BackendURL, statusCode, backendDuration)
 
 	// Log backend response
 	correlationID := logger.GetCorrelationID(r.Context())

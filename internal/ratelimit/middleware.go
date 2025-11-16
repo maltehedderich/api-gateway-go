@@ -9,6 +9,7 @@ import (
 
 	"github.com/maltehedderich/api-gateway-go/internal/config"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
+	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 )
 
 // Middleware creates a rate limiting middleware.
@@ -30,13 +31,18 @@ func Middleware(limiter *Limiter, cfg *config.Config) func(http.Handler) http.Ha
 
 			// Check each limit
 			for _, limitDef := range limits {
+				checkStart := time.Now()
 				result, err := limiter.Allow(r.Context(), r, &limitDef)
+				metrics.RecordRateLimitCheckDuration(time.Since(checkStart))
+				metrics.RecordRateLimitCheck()
+
 				if err != nil {
 					log.Error("rate limit check failed", logger.Fields{
 						"error": err.Error(),
 						"key":   limitDef.Key,
 						"path":  r.URL.Path,
 					})
+					metrics.RecordRateLimitError("check_failed")
 
 					// On error, apply failure mode
 					if cfg.RateLimit.FailureMode == "fail-closed" {
@@ -45,6 +51,12 @@ func Middleware(limiter *Limiter, cfg *config.Config) func(http.Handler) http.Ha
 					}
 					// fail-open: continue to next limit or allow request
 					continue
+				}
+
+				// Record utilization
+				if result.Limit > 0 {
+					utilization := float64(result.Limit-result.Remaining) / float64(result.Limit) * 100
+					metrics.RecordRateLimitUtilization(limitDef.Key, utilization)
 				}
 
 				// Add rate limit headers to response
@@ -59,6 +71,7 @@ func Middleware(limiter *Limiter, cfg *config.Config) func(http.Handler) http.Ha
 						"path":      r.URL.Path,
 						"method":    r.Method,
 					})
+					metrics.RecordRateLimitExceeded(limitDef.Key, r.URL.Path)
 
 					writeRateLimitError(w, r, &limitDef, result)
 					return
