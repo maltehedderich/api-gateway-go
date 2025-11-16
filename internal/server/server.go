@@ -117,20 +117,7 @@ func (s *Server) Start() error {
 
 	// Setup HTTPS server if TLS is enabled
 	if s.config.Server.TLSEnabled {
-		tlsConfig := &tls.Config{
-			MinVersion:               tls.VersionTLS12,
-			PreferServerCipherSuites: true,
-			CurvePreferences: []tls.CurveID{
-				tls.CurveP256,
-				tls.X25519,
-			},
-			CipherSuites: []uint16{
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			},
-		}
+		tlsConfig := s.buildTLSConfig()
 
 		s.httpsServer = &http.Server{
 			Addr:           fmt.Sprintf(":%d", s.config.Server.HTTPSPort),
@@ -205,7 +192,12 @@ func (s *Server) setupRouter() http.Handler {
 	var handler http.Handler = mux
 
 	// Middleware is applied in reverse order (last applied = first executed)
-	// Order: Recovery -> CorrelationID -> Tracing -> Metrics -> Logging -> RateLimit -> Auth -> Handler
+	// Order: Recovery/ErrorHandling -> CorrelationID -> Tracing -> Metrics -> Logging ->
+	//        Security Headers -> RateLimit -> Auth -> Input Validation -> HTTPS Redirect -> Handler
+
+	// Security headers middleware (applied to all responses)
+	securityCfg := middleware.NewSecurityConfigFromConfig(s.config)
+	handler = middleware.Security(securityCfg)(handler)
 
 	// Rate limiting middleware (before auth, after logging)
 	if s.rateLimiter != nil {
@@ -216,6 +208,9 @@ func (s *Server) setupRouter() http.Handler {
 	if s.authMiddleware != nil {
 		handler = s.authMiddleware.Handler(handler)
 	}
+
+	// Input validation middleware
+	handler = middleware.InputValidation(&s.config.Security)(handler)
 
 	handler = middleware.Logging()(handler)
 
@@ -230,7 +225,14 @@ func (s *Server) setupRouter() http.Handler {
 	}
 
 	handler = middleware.CorrelationID()(handler)
-	handler = middleware.Recovery()(handler)
+
+	// Error handling middleware (replaces basic recovery)
+	handler = middleware.ErrorHandling(&s.config.Security)(handler)
+
+	// HTTPS redirect middleware (only on HTTP server if TLS enabled)
+	if s.config.Server.TLSEnabled && s.config.Security.EnableHTTPSRedirect {
+		handler = middleware.HTTPSRedirect()(handler)
+	}
 
 	return handler
 }
@@ -388,4 +390,75 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// buildTLSConfig creates TLS configuration based on security settings
+func (s *Server) buildTLSConfig() *tls.Config {
+	// Determine minimum TLS version
+	minVersion := tls.VersionTLS12
+	switch s.config.Security.TLSMinVersion {
+	case "1.3":
+		minVersion = tls.VersionTLS13
+	case "1.2":
+		minVersion = tls.VersionTLS12
+	default:
+		s.logger.Warn("invalid TLS min version, defaulting to 1.2", logger.Fields{
+			"configured_version": s.config.Security.TLSMinVersion,
+		})
+	}
+
+	// Build cipher suites list
+	cipherSuites := buildCipherSuites(s.config.Security.TLSCipherSuites)
+	if len(cipherSuites) == 0 {
+		// Use default secure cipher suites
+		cipherSuites = []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+		}
+	}
+
+	return &tls.Config{
+		MinVersion:               uint16(minVersion),
+		PreferServerCipherSuites: true,
+		CurvePreferences: []tls.CurveID{
+			tls.X25519,
+			tls.CurveP256,
+			tls.CurveP384,
+		},
+		CipherSuites: cipherSuites,
+	}
+}
+
+// buildCipherSuites converts cipher suite names to their uint16 constants
+func buildCipherSuites(suiteNames []string) []uint16 {
+	if len(suiteNames) == 0 {
+		return nil
+	}
+
+	// Map of cipher suite names to their constants
+	suiteMap := map[string]uint16{
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":       tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":       tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384":     tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256":     tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305":        tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+		"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305":      tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+		"TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA":          tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA":          tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+		"TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA":        tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		"TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA":        tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+	}
+
+	suites := make([]uint16, 0, len(suiteNames))
+	for _, name := range suiteNames {
+		if suite, ok := suiteMap[name]; ok {
+			suites = append(suites, suite)
+		}
+	}
+
+	return suites
 }

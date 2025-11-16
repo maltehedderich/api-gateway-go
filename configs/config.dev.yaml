@@ -77,6 +77,48 @@ routes:
     auth_policy: public
     strip_prefix: ""
 
+security:
+  # TLS Configuration (disabled in dev, but can be enabled for testing)
+  tls_min_version: "1.2"
+  tls_cipher_suites: []  # Use defaults
+  enable_https_redirect: false
+
+  # HSTS (disabled for development)
+  enable_hsts: false
+  hsts_max_age: 0
+  hsts_include_subdomains: false
+  hsts_preload: false
+
+  # Security Headers (enabled but lenient)
+  content_security_policy: ""  # Disabled for easier dev tool usage
+  frame_options: SAMEORIGIN
+  content_type_nosniff: true
+  xss_protection: true
+  xss_block_mode: false
+  referrer_policy: no-referrer-when-downgrade
+  permissions_policy: ""
+
+  # Cookie Security (not enforced for easier testing)
+  enforce_cookie_security: false
+  cookie_same_site: Lax
+
+  # Input Validation (more permissive)
+  max_request_body_size: 52428800  # 50 MB
+  max_url_path_length: 4096
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - PATCH
+    - OPTIONS
+    - HEAD
+  blocked_user_agents: []  # No blocks in development
+
+  # Error Disclosure (show errors for debugging)
+  hide_internal_errors: false
+  production_mode: false
+
 observability:
   metrics_enabled: true
   metrics_port: 9090
