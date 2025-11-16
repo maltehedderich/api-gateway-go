@@ -10,6 +10,7 @@ import (
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
 	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 	"github.com/maltehedderich/api-gateway-go/internal/server"
+	"github.com/maltehedderich/api-gateway-go/internal/tracing"
 )
 
 var (
@@ -103,6 +104,29 @@ func main() {
 		})
 	}
 
+	// Initialize distributed tracing if enabled
+	if cfg.Observability.TracingEnabled {
+		tracingConfig := &tracing.Config{
+			Enabled:        cfg.Observability.TracingEnabled,
+			Endpoint:       cfg.Observability.TracingEndpoint,
+			ServiceName:    "api-gateway",
+			ServiceVersion: version,
+			Environment:    getEnvironment(cfg),
+			SampleRate:     1.0, // Sample all traces by default
+		}
+
+		if err := tracing.Init(tracingConfig); err != nil {
+			log.Error("failed to initialize tracing", logger.Fields{
+				"error": err.Error(),
+			})
+			// Continue without tracing - don't fail startup
+		} else {
+			log.Info("distributed tracing initialized", logger.Fields{
+				"endpoint": cfg.Observability.TracingEndpoint,
+			})
+		}
+	}
+
 	// Initialize health check manager
 	healthMgr := health.NewManager()
 
@@ -130,3 +154,18 @@ func main() {
 
 	log.Info("API gateway stopped")
 }
+
+// getEnvironment determines the deployment environment
+func getEnvironment(cfg *config.Config) string {
+	// Try to determine environment from configuration or environment variables
+	if env := os.Getenv("ENVIRONMENT"); env != "" {
+		return env
+	}
+	if env := os.Getenv("ENV"); env != "" {
+		return env
+	}
+
+	// Default to development
+	return "development"
+}
+
