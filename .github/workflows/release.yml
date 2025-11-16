@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+          GIT_COMMIT=${{ github.sha }}
+
+          LDFLAGS="-w -s -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}"
+
+          # Build for multiple platforms
+          mkdir -p dist
+
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/gateway-linux-amd64 ./cmd/gateway
+
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/gateway-linux-arm64 ./cmd/gateway
+
+          # macOS AMD64
+          GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/gateway-darwin-amd64 ./cmd/gateway
+
+          # macOS ARM64
+          GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/gateway-darwin-arm64 ./cmd/gateway
+
+          # Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/gateway-windows-amd64.exe ./cmd/gateway
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PREV_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "Generating release notes from ${PREV_TAG} to ${VERSION}"
+            NOTES=$(git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s (%h)" --no-merges)
+          else
+            echo "No previous tag found, using recent commits"
+            NOTES=$(git log -10 --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          {
+            echo "## What's Changed"
+            echo ""
+            echo "${NOTES}"
+            echo ""
+            echo "## Installation"
+            echo ""
+            echo "Download the binary for your platform and make it executable:"
+            echo ""
+            echo '```bash'
+            echo "# Linux AMD64"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/${VERSION}/gateway-linux-amd64"
+            echo "chmod +x gateway-linux-amd64"
+            echo "mv gateway-linux-amd64 /usr/local/bin/gateway"
+            echo ""
+            echo "# macOS ARM64 (Apple Silicon)"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/${VERSION}/gateway-darwin-arm64"
+            echo "chmod +x gateway-darwin-arm64"
+            echo "mv gateway-darwin-arm64 /usr/local/bin/gateway"
+            echo '```'
+          } > release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/gateway-*
+            dist/checksums.txt
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-rc') || contains(steps.version.outputs.version, '-beta') || contains(steps.version.outputs.version, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
