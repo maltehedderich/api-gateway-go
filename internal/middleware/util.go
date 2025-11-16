@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bufio"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -42,4 +43,64 @@ func WriteJSON(w http.ResponseWriter, v interface{}) error {
 // writeJSON is an internal helper
 func writeJSON(w http.ResponseWriter, v interface{}) error {
 	return WriteJSON(w, v)
+}
+
+// ResponseWriter wraps http.ResponseWriter to capture status code and response size
+type ResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	size        int
+	wroteHeader bool
+}
+
+// NewResponseWriter creates a new ResponseWriter
+func NewResponseWriter(w http.ResponseWriter) *ResponseWriter {
+	return &ResponseWriter{
+		ResponseWriter: w,
+		status:         http.StatusOK, // default status
+	}
+}
+
+// WriteHeader captures the status code
+func (rw *ResponseWriter) WriteHeader(statusCode int) {
+	if !rw.wroteHeader {
+		rw.status = statusCode
+		rw.wroteHeader = true
+		rw.ResponseWriter.WriteHeader(statusCode)
+	}
+}
+
+// Write captures the response size
+func (rw *ResponseWriter) Write(b []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.WriteHeader(http.StatusOK)
+	}
+	n, err := rw.ResponseWriter.Write(b)
+	rw.size += n
+	return n, err
+}
+
+// Status returns the status code
+func (rw *ResponseWriter) Status() int {
+	return rw.status
+}
+
+// Size returns the response size
+func (rw *ResponseWriter) Size() int {
+	return rw.size
+}
+
+// Flush implements http.Flusher
+func (rw *ResponseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack implements http.Hijacker
+func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
