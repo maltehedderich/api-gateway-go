@@ -11,10 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/maltehedderich/api-gateway-go/internal/circuitbreaker"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
 	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 	"github.com/maltehedderich/api-gateway-go/internal/router"
+	"github.com/maltehedderich/api-gateway-go/internal/tracing"
 )
 
 // Proxy handles request forwarding to backend services
@@ -84,27 +90,48 @@ func New(config *Config) *Proxy {
 
 // Forward forwards a request to the backend service
 func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, match *router.Match) error {
+	// Start a span for backend call
+	ctx, span := tracing.StartSpan(
+		r.Context(),
+		"proxy.Forward",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			semconv.HTTPMethodKey.String(r.Method),
+			semconv.HTTPURLKey.String(match.Route.BackendURL),
+			attribute.String("backend.service", match.Route.BackendURL),
+		),
+	)
+	defer span.End()
+
 	// Parse backend URL
 	backendURL, err := url.Parse(match.Route.BackendURL)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid backend URL")
 		return fmt.Errorf("invalid backend URL: %w", err)
 	}
 
 	// Build target URL
 	targetURL := p.buildTargetURL(backendURL, r, match)
 
-	// Create backend request
+	// Create backend request with traced context
 	backendReq, err := p.createBackendRequest(r, targetURL, match)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to create backend request")
 		return fmt.Errorf("failed to create backend request: %w", err)
 	}
+
+	// Inject trace context into backend request headers
+	backendReq = backendReq.WithContext(ctx)
+	tracing.InjectTraceContext(ctx, backendReq)
 
 	// Set timeout if specified in route
 	if match.Route.Timeout > 0 {
 		timeout := time.Duration(match.Route.Timeout) * time.Millisecond
-		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		backendReq = backendReq.WithContext(ctx)
+		backendReq = backendReq.WithContext(timeoutCtx)
 	}
 
 	// Get circuit breaker for this backend
@@ -120,9 +147,15 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, match *router.Ma
 	})
 	backendDuration := time.Since(backendStart)
 
+	// Record backend duration in span
+	span.SetAttributes(attribute.Int64("backend.duration_ms", backendDuration.Milliseconds()))
+
 	// Record backend metrics
 	if err != nil {
+		span.RecordError(err)
 		if err == circuitbreaker.ErrCircuitOpen {
+			span.SetStatus(codes.Error, "circuit breaker open")
+			span.SetAttributes(attribute.String("error.type", "circuit_open"))
 			metrics.RecordBackendError(match.Route.BackendURL, "circuit_open")
 			return fmt.Errorf("circuit breaker open for backend %s", match.Route.BackendURL)
 		}
@@ -135,6 +168,8 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, match *router.Ma
 		} else if strings.Contains(err.Error(), "no such host") {
 			errorType = "dns_error"
 		}
+		span.SetStatus(codes.Error, errorType)
+		span.SetAttributes(attribute.String("error.type", errorType))
 		metrics.RecordBackendError(match.Route.BackendURL, errorType)
 		return fmt.Errorf("backend request failed: %w", err)
 	}
@@ -149,6 +184,14 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, match *router.Ma
 	// Record successful backend request
 	statusCode := strconv.Itoa(resp.StatusCode)
 	metrics.RecordBackendRequest(match.Route.BackendURL, statusCode, backendDuration)
+
+	// Record response status in span
+	span.SetAttributes(semconv.HTTPStatusCodeKey.Int(resp.StatusCode))
+	if resp.StatusCode >= 400 {
+		span.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
 
 	// Log backend response
 	correlationID := logger.GetCorrelationID(r.Context())

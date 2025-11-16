@@ -19,6 +19,7 @@ import (
 	"github.com/maltehedderich/api-gateway-go/internal/proxy"
 	"github.com/maltehedderich/api-gateway-go/internal/ratelimit"
 	"github.com/maltehedderich/api-gateway-go/internal/router"
+	"github.com/maltehedderich/api-gateway-go/internal/tracing"
 )
 
 // Server represents the API Gateway server
@@ -204,7 +205,7 @@ func (s *Server) setupRouter() http.Handler {
 	var handler http.Handler = mux
 
 	// Middleware is applied in reverse order (last applied = first executed)
-	// Order: Recovery -> CorrelationID -> Metrics -> Logging -> RateLimit -> Auth -> Handler
+	// Order: Recovery -> CorrelationID -> Tracing -> Metrics -> Logging -> RateLimit -> Auth -> Handler
 
 	// Rate limiting middleware (before auth, after logging)
 	if s.rateLimiter != nil {
@@ -218,9 +219,14 @@ func (s *Server) setupRouter() http.Handler {
 
 	handler = middleware.Logging()(handler)
 
-	// Metrics middleware (after logging, before correlation ID)
+	// Metrics middleware (after logging, before tracing)
 	if s.config.Observability.MetricsEnabled {
 		handler = metrics.Middleware()(handler)
+	}
+
+	// Tracing middleware (after metrics, before correlation ID)
+	if s.config.Observability.TracingEnabled {
+		handler = tracing.Middleware()(handler)
 	}
 
 	handler = middleware.CorrelationID()(handler)
@@ -335,6 +341,16 @@ func (s *Server) handleShutdown(errChan chan error) {
 		}
 	}
 
+	// Shutdown tracing
+	if s.config.Observability.TracingEnabled {
+		s.logger.Info("shutting down tracing")
+		if err := tracing.Shutdown(ctx); err != nil {
+			s.logger.Error("tracing shutdown error", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+	}
+
 	s.logger.Info("server shutdown complete")
 	errChan <- nil
 }
@@ -361,6 +377,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.rateLimiter != nil {
 		if err := s.rateLimiter.Close(); err != nil {
 			return fmt.Errorf("failed to close rate limiter: %w", err)
+		}
+	}
+
+	// Shutdown tracing
+	if s.config.Observability.TracingEnabled {
+		if err := tracing.Shutdown(ctx); err != nil {
+			return fmt.Errorf("failed to shutdown tracing: %w", err)
 		}
 	}
 
