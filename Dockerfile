@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/gateway
 
 # Runtime stage
-FROM alpine:3.18
+FROM alpine:3.19
 
 # Install ca-certificates for HTTPS
 RUN apk --no-cache add ca-certificates tzdata
