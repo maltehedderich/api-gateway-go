@@ -10,11 +10,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/maltehedderich/api-gateway-go/internal/auth"
 	"github.com/maltehedderich/api-gateway-go/internal/config"
 	"github.com/maltehedderich/api-gateway-go/internal/health"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
 	"github.com/maltehedderich/api-gateway-go/internal/middleware"
 	"github.com/maltehedderich/api-gateway-go/internal/proxy"
+	"github.com/maltehedderich/api-gateway-go/internal/ratelimit"
 	"github.com/maltehedderich/api-gateway-go/internal/router"
 )
 
@@ -26,17 +28,20 @@ type Server struct {
 	healthManager *health.Manager
 	router        *router.Router
 	proxy         *proxy.Proxy
+	rateLimiter   *ratelimit.Limiter
+	authMiddleware *auth.Middleware
 	logger        *logger.ComponentLogger
 }
 
 // New creates a new server instance
 func New(cfg *config.Config, healthMgr *health.Manager) *Server {
+	log := logger.Get().WithComponent("server")
+
 	// Create router
 	rtr := router.New()
 
 	// Load routes from configuration
 	if err := rtr.LoadRoutes(cfg.Routes); err != nil {
-		log := logger.Get().WithComponent("server")
 		log.Error("failed to load routes", logger.Fields{
 			"error": err.Error(),
 		})
@@ -45,12 +50,51 @@ func New(cfg *config.Config, healthMgr *health.Manager) *Server {
 	// Create proxy with default configuration
 	prx := proxy.New(nil)
 
+	// Create rate limiter
+	var rateLimiter *ratelimit.Limiter
+	if cfg.RateLimit.Enabled {
+		limiter, err := ratelimit.NewLimiter(&cfg.RateLimit)
+		if err != nil {
+			log.Error("failed to create rate limiter", logger.Fields{
+				"error": err.Error(),
+			})
+		} else {
+			rateLimiter = limiter
+			log.Info("rate limiter initialized", logger.Fields{
+				"backend": cfg.RateLimit.Backend,
+			})
+
+			// Register rate limiter health check
+			if rateLimiter != nil {
+				healthMgr.Register("ratelimit", health.RateLimiterChecker(rateLimiter))
+			}
+		}
+	}
+
+	// Create auth middleware
+	var authMw *auth.Middleware
+	if cfg.Authorization.Enabled {
+		middleware, err := auth.NewMiddleware(&cfg.Authorization)
+		if err != nil {
+			log.Error("failed to create auth middleware", logger.Fields{
+				"error": err.Error(),
+			})
+		} else {
+			authMw = middleware
+			log.Info("authorization middleware initialized", logger.Fields{
+				"algorithm": cfg.Authorization.JWTSigningAlgorithm,
+			})
+		}
+	}
+
 	return &Server{
 		config:        cfg,
 		healthManager: healthMgr,
 		router:        rtr,
 		proxy:         prx,
-		logger:        logger.Get().WithComponent("server"),
+		rateLimiter:   rateLimiter,
+		authMiddleware: authMw,
+		logger:        log,
 	}
 }
 
@@ -153,7 +197,17 @@ func (s *Server) setupRouter() http.Handler {
 	var handler http.Handler = mux
 
 	// Middleware is applied in reverse order (last applied = first executed)
-	// Order: Recovery -> CorrelationID -> Logging -> Handler
+	// Order: Recovery -> CorrelationID -> Logging -> RateLimit -> Auth -> Handler
+
+	// Rate limiting middleware (before auth, after logging)
+	if s.rateLimiter != nil {
+		handler = ratelimit.Middleware(s.rateLimiter, s.config)(handler)
+	}
+
+	// Authorization middleware (after logging, before rate limiting)
+	if s.authMiddleware != nil {
+		handler = s.authMiddleware.Handler(handler)
+	}
 
 	handler = middleware.Logging()(handler)
 	handler = middleware.CorrelationID()(handler)
@@ -258,6 +312,16 @@ func (s *Server) handleShutdown(errChan chan error) {
 		}
 	}
 
+	// Cleanup rate limiter
+	if s.rateLimiter != nil {
+		s.logger.Info("closing rate limiter")
+		if err := s.rateLimiter.Close(); err != nil {
+			s.logger.Error("rate limiter close error", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+	}
+
 	s.logger.Info("server shutdown complete")
 	errChan <- nil
 }
@@ -277,6 +341,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.httpsServer != nil {
 		if err := s.httpsServer.Shutdown(ctx); err != nil {
 			return fmt.Errorf("failed to shutdown HTTPS server: %w", err)
+		}
+	}
+
+	// Cleanup rate limiter
+	if s.rateLimiter != nil {
+		if err := s.rateLimiter.Close(); err != nil {
+			return fmt.Errorf("failed to close rate limiter: %w", err)
 		}
 	}
 
