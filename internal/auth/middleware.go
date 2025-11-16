@@ -7,6 +7,7 @@ import (
 
 	"github.com/maltehedderich/api-gateway-go/internal/config"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
+	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 	"github.com/maltehedderich/api-gateway-go/internal/router"
 )
 
@@ -87,6 +88,7 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			m.logger.Debug("public route, skipping authorization", logger.Fields{
 				"path": r.URL.Path,
 			})
+			metrics.RecordAuthAttempt("bypass")
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -94,13 +96,32 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		// Extract token
 		tokenString, err := m.extractor.ExtractToken(r)
 		if err != nil {
+			metrics.RecordAuthAttempt("failure")
+			metrics.RecordAuthFailure("missing_token")
 			m.handleAuthError(w, r, err, "token extraction failed")
 			return
 		}
 
 		// Validate token
+		validationStart := time.Now()
 		claims, err := m.validator.ValidateToken(tokenString)
+		metrics.RecordAuthValidationDuration(time.Since(validationStart))
+
 		if err != nil {
+			metrics.RecordAuthAttempt("failure")
+			// Determine error type from validation error
+			if valErr, ok := err.(*ValidationError); ok {
+				switch valErr.Code {
+				case "token_expired":
+					metrics.RecordAuthFailure("expired_token")
+				case "invalid_token":
+					metrics.RecordAuthFailure("invalid_token")
+				default:
+					metrics.RecordAuthFailure("invalid_token")
+				}
+			} else {
+				metrics.RecordAuthFailure("invalid_token")
+			}
 			m.handleAuthError(w, r, err, "token validation failed")
 			return
 		}
@@ -118,6 +139,8 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 				"user_id":    claims.UserID,
 				"session_id": maskSessionID(claims.SessionID),
 			})
+			metrics.RecordAuthAttempt("failure")
+			metrics.RecordAuthFailure("revoked_token")
 			m.writeError(w, r, http.StatusUnauthorized, "token_revoked", "Session token has been revoked", nil)
 			return
 		}
@@ -143,6 +166,8 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 				"reason":      decision.Reason,
 				"policy_type": policy.Type,
 			})
+			metrics.RecordAuthAttempt("failure")
+			metrics.RecordAuthFailure("insufficient_permissions")
 			m.writeError(w, r, http.StatusForbidden, "forbidden", decision.Reason, decision.Details)
 			return
 		}
@@ -158,6 +183,9 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			"roles":       claims.Roles,
 			"policy_type": policy.Type,
 		})
+
+		// Record successful authorization
+		metrics.RecordAuthAttempt("success")
 
 		// Call next handler with updated context
 		next.ServeHTTP(w, r.WithContext(ctx))

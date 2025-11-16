@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
+	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 )
 
 // State represents the circuit breaker state
@@ -199,6 +200,10 @@ func (cb *CircuitBreaker) setState(newState State) {
 	oldState := cb.state
 	cb.state = newState
 	cb.lastStateChange = time.Now()
+
+	// Record metrics
+	metrics.SetCircuitBreakerState(cb.name, int(newState))
+	metrics.RecordCircuitBreakerTransition(cb.name, oldState.String(), newState.String())
 
 	cb.logger.Info("circuit breaker state changed", logger.Fields{
 		"name":      cb.name,

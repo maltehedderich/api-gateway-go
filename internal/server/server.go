@@ -14,6 +14,7 @@ import (
 	"github.com/maltehedderich/api-gateway-go/internal/config"
 	"github.com/maltehedderich/api-gateway-go/internal/health"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
+	"github.com/maltehedderich/api-gateway-go/internal/metrics"
 	"github.com/maltehedderich/api-gateway-go/internal/middleware"
 	"github.com/maltehedderich/api-gateway-go/internal/proxy"
 	"github.com/maltehedderich/api-gateway-go/internal/ratelimit"
@@ -190,6 +191,12 @@ func (s *Server) setupRouter() http.Handler {
 	mux.HandleFunc(readinessPath, s.healthManager.ReadinessHandler())
 	mux.HandleFunc(livenessPath, s.healthManager.LivenessHandler())
 
+	// Metrics endpoint
+	if s.config.Observability.MetricsEnabled {
+		metricsPath := s.config.Observability.MetricsPath
+		mux.Handle(metricsPath, metrics.Handler())
+	}
+
 	// Default handler for all other routes
 	mux.HandleFunc("/", s.defaultHandler())
 
@@ -197,7 +204,7 @@ func (s *Server) setupRouter() http.Handler {
 	var handler http.Handler = mux
 
 	// Middleware is applied in reverse order (last applied = first executed)
-	// Order: Recovery -> CorrelationID -> Logging -> RateLimit -> Auth -> Handler
+	// Order: Recovery -> CorrelationID -> Metrics -> Logging -> RateLimit -> Auth -> Handler
 
 	// Rate limiting middleware (before auth, after logging)
 	if s.rateLimiter != nil {
@@ -210,6 +217,12 @@ func (s *Server) setupRouter() http.Handler {
 	}
 
 	handler = middleware.Logging()(handler)
+
+	// Metrics middleware (after logging, before correlation ID)
+	if s.config.Observability.MetricsEnabled {
+		handler = metrics.Middleware()(handler)
+	}
+
 	handler = middleware.CorrelationID()(handler)
 	handler = middleware.Recovery()(handler)
 

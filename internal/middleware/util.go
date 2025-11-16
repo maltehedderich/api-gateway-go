@@ -85,8 +85,18 @@ func (rw *ResponseWriter) Status() int {
 	return rw.status
 }
 
+// StatusCode returns the status code (alias for Status)
+func (rw *ResponseWriter) StatusCode() int {
+	return rw.status
+}
+
 // Size returns the response size
 func (rw *ResponseWriter) Size() int {
+	return rw.size
+}
+
+// BytesWritten returns the number of bytes written (alias for Size)
+func (rw *ResponseWriter) BytesWritten() int {
 	return rw.size
 }
 
