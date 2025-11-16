@@ -10,15 +10,24 @@ import (
 
 // TokenExtractor extracts tokens from HTTP requests
 type TokenExtractor struct {
-	config *config.AuthorizationConfig
-	logger *logger.ComponentLogger
+	config         *config.AuthorizationConfig
+	securityConfig *config.SecurityConfig
+	logger         *logger.ComponentLogger
 }
 
 // NewTokenExtractor creates a new token extractor
 func NewTokenExtractor(cfg *config.AuthorizationConfig) *TokenExtractor {
+	// Get global config for security settings
+	globalCfg := config.Get()
+	securityCfg := &config.SecurityConfig{}
+	if globalCfg != nil {
+		securityCfg = &globalCfg.Security
+	}
+
 	return &TokenExtractor{
-		config: cfg,
-		logger: logger.Get().WithComponent("auth.extractor"),
+		config:         cfg,
+		securityConfig: securityCfg,
+		logger:         logger.Get().WithComponent("auth.extractor"),
 	}
 }
 
@@ -57,8 +66,10 @@ func (te *TokenExtractor) ExtractToken(r *http.Request) (string, error) {
 		"path":        r.URL.Path,
 	})
 
-	// Warn if cookie is missing security attributes
-	te.validateCookieSecurity(cookie)
+	// Validate and potentially enforce cookie security attributes
+	if err := te.validateCookieSecurity(cookie); err != nil {
+		return "", err
+	}
 
 	return cookie.Value, nil
 }
@@ -79,23 +90,43 @@ func sameSiteToString(sameSite http.SameSite) string {
 	}
 }
 
-// validateCookieSecurity validates cookie security attributes and logs warnings
-func (te *TokenExtractor) validateCookieSecurity(cookie *http.Cookie) {
+// validateCookieSecurity validates cookie security attributes and enforces them if configured
+func (te *TokenExtractor) validateCookieSecurity(cookie *http.Cookie) error {
 	warnings := make([]string, 0)
+	errors := make([]string, 0)
+
+	enforceMode := te.securityConfig != nil && te.securityConfig.EnforceCookieSecurity
 
 	// Check Secure flag
 	if !cookie.Secure {
-		warnings = append(warnings, "Secure flag not set")
+		msg := "Secure flag not set"
+		if enforceMode {
+			errors = append(errors, msg)
+		} else {
+			warnings = append(warnings, msg)
+		}
 	}
 
 	// Check HttpOnly flag
 	if !cookie.HttpOnly {
-		warnings = append(warnings, "HttpOnly flag not set")
+		msg := "HttpOnly flag not set"
+		if enforceMode {
+			errors = append(errors, msg)
+		} else {
+			warnings = append(warnings, msg)
+		}
 	}
 
 	// Check SameSite attribute
-	if cookie.SameSite == http.SameSiteNoneMode || cookie.SameSite == http.SameSiteDefaultMode {
-		warnings = append(warnings, "SameSite attribute not properly configured")
+	expectedSameSite := parseSameSite(te.securityConfig.CookieSameSite)
+	if cookie.SameSite != expectedSameSite {
+		msg := fmt.Sprintf("SameSite attribute mismatch (expected: %s, got: %s)",
+			te.securityConfig.CookieSameSite, sameSiteToString(cookie.SameSite))
+		if enforceMode && expectedSameSite != http.SameSiteDefaultMode {
+			errors = append(errors, msg)
+		} else {
+			warnings = append(warnings, msg)
+		}
 	}
 
 	// Log warnings if any
@@ -104,5 +135,34 @@ func (te *TokenExtractor) validateCookieSecurity(cookie *http.Cookie) {
 			"cookie_name": cookie.Name,
 			"warnings":    warnings,
 		})
+	}
+
+	// Return error if enforcement is enabled and there are issues
+	if enforceMode && len(errors) > 0 {
+		te.logger.Error("session cookie failed security validation", logger.Fields{
+			"cookie_name": cookie.Name,
+			"errors":      errors,
+		})
+
+		return &ValidationError{
+			Code:    "invalid_cookie_security",
+			Message: "Session cookie does not meet security requirements",
+		}
+	}
+
+	return nil
+}
+
+// parseSameSite converts a string to http.SameSite constant
+func parseSameSite(sameSite string) http.SameSite {
+	switch sameSite {
+	case "Strict":
+		return http.SameSiteStrictMode
+	case "Lax":
+		return http.SameSiteLaxMode
+	case "None":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteDefaultMode
 	}
 }

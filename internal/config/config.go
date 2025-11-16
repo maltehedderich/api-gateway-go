@@ -19,6 +19,7 @@ type Config struct {
 	Logging       LoggingConfig       `yaml:"logging" json:"logging"`
 	Authorization AuthorizationConfig `yaml:"authorization" json:"authorization"`
 	RateLimit     RateLimitConfig     `yaml:"rate_limit" json:"rate_limit"`
+	Security      SecurityConfig      `yaml:"security" json:"security"`
 	Routes        []RouteConfig       `yaml:"routes" json:"routes"`
 	Observability ObservabilityConfig `yaml:"observability" json:"observability"`
 }
@@ -95,6 +96,43 @@ type RouteConfig struct {
 	RequiredRoles  []string          `yaml:"required_roles" json:"required_roles"`
 	RateLimits     []LimitDefinition `yaml:"rate_limits" json:"rate_limits"`
 	StripPrefix    string            `yaml:"strip_prefix" json:"strip_prefix"`
+}
+
+// SecurityConfig contains security configuration
+type SecurityConfig struct {
+	// TLS Configuration
+	TLSMinVersion         string   `yaml:"tls_min_version" json:"tls_min_version"` // 1.2 or 1.3
+	TLSCipherSuites       []string `yaml:"tls_cipher_suites" json:"tls_cipher_suites"`
+	EnableHTTPSRedirect   bool     `yaml:"enable_https_redirect" json:"enable_https_redirect"`
+
+	// HSTS (HTTP Strict Transport Security)
+	EnableHSTS            bool `yaml:"enable_hsts" json:"enable_hsts"`
+	HSTSMaxAge            int  `yaml:"hsts_max_age" json:"hsts_max_age"`
+	HSTSIncludeSubdomains bool `yaml:"hsts_include_subdomains" json:"hsts_include_subdomains"`
+	HSTSPreload           bool `yaml:"hsts_preload" json:"hsts_preload"`
+
+	// Security Headers
+	ContentSecurityPolicy string `yaml:"content_security_policy" json:"content_security_policy"`
+	FrameOptions          string `yaml:"frame_options" json:"frame_options"` // DENY, SAMEORIGIN
+	ContentTypeNosniff    bool   `yaml:"content_type_nosniff" json:"content_type_nosniff"`
+	XSSProtection         bool   `yaml:"xss_protection" json:"xss_protection"`
+	XSSBlockMode          bool   `yaml:"xss_block_mode" json:"xss_block_mode"`
+	ReferrerPolicy        string `yaml:"referrer_policy" json:"referrer_policy"`
+	PermissionsPolicy     string `yaml:"permissions_policy" json:"permissions_policy"`
+
+	// Cookie Security
+	EnforceCookieSecurity bool `yaml:"enforce_cookie_security" json:"enforce_cookie_security"`
+	CookieSameSite        string `yaml:"cookie_same_site" json:"cookie_same_site"` // Strict, Lax, None
+
+	// Input Validation
+	MaxRequestBodySize   int64    `yaml:"max_request_body_size" json:"max_request_body_size"` // bytes
+	MaxURLPathLength     int      `yaml:"max_url_path_length" json:"max_url_path_length"`
+	AllowedMethods       []string `yaml:"allowed_methods" json:"allowed_methods"`
+	BlockedUserAgents    []string `yaml:"blocked_user_agents" json:"blocked_user_agents"`
+
+	// Error Disclosure
+	HideInternalErrors   bool `yaml:"hide_internal_errors" json:"hide_internal_errors"`
+	ProductionMode       bool `yaml:"production_mode" json:"production_mode"`
 }
 
 // ObservabilityConfig contains observability configuration
@@ -210,6 +248,28 @@ func (c *Config) setDefaults() {
 	c.Observability.ReadinessPath = "/_health/ready"
 	c.Observability.LivenessPath = "/_health/live"
 	c.Observability.TracingEnabled = false
+
+	// Security defaults
+	c.Security.TLSMinVersion = "1.2"
+	c.Security.EnableHTTPSRedirect = false
+	c.Security.EnableHSTS = true
+	c.Security.HSTSMaxAge = 31536000 // 1 year
+	c.Security.HSTSIncludeSubdomains = true
+	c.Security.HSTSPreload = false
+	c.Security.ContentSecurityPolicy = "default-src 'self'"
+	c.Security.FrameOptions = "DENY"
+	c.Security.ContentTypeNosniff = true
+	c.Security.XSSProtection = true
+	c.Security.XSSBlockMode = true
+	c.Security.ReferrerPolicy = "strict-origin-when-cross-origin"
+	c.Security.PermissionsPolicy = "geolocation=(), microphone=(), camera=()"
+	c.Security.EnforceCookieSecurity = true
+	c.Security.CookieSameSite = "Strict"
+	c.Security.MaxRequestBodySize = 10 << 20 // 10 MB
+	c.Security.MaxURLPathLength = 2048
+	c.Security.AllowedMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+	c.Security.HideInternalErrors = true
+	c.Security.ProductionMode = false
 }
 
 // Validate validates the configuration
