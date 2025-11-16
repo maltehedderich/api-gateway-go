@@ -203,7 +203,7 @@ func (p *Proxy) createBackendRequest(r *http.Request, targetURL *url.URL, match 
 	}
 
 	// Add Via header
-	backendReq.Header.Add("Via", fmt.Sprintf("1.1 gateway"))
+	backendReq.Header.Add("Via", "1.1 gateway")
 
 	// Set Host header to backend host
 	backendReq.Host = targetURL.Host
