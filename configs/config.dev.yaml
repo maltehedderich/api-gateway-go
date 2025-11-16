@@ -1,0 +1,88 @@
+# Development Configuration
+# This configuration is optimized for local development
+
+server:
+  http_port: 8080
+  https_port: 8443
+  tls_enabled: false
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  handler_timeout: 30s
+  max_header_bytes: 1048576  # 1 MB
+  shutdown_timeout: 30s
+  enable_http2: true
+  trusted_proxies: []
+
+logging:
+  level: debug
+  format: text  # Use text format for easier reading during development
+  output: stdout
+  sanitize_patterns:
+    - "(?i)password"
+    - "(?i)token"
+    - "(?i)secret"
+    - "(?i)api[_-]?key"
+  component_levels:
+    http: debug
+    server: debug
+  enable_sampling: false
+  sampling_rate: 1.0
+
+authorization:
+  enabled: false  # Disabled for development to simplify testing
+  cookie_name: session_token
+  jwt_signing_algorithm: HS256
+  jwt_shared_secret: dev-secret-key-please-change-in-production
+  clock_skew_tolerance: 5s
+  required_claims:
+    - sub
+    - exp
+  revocation_list_url: ""
+  revocation_list_cache: 30s
+  cache_auth_decisions: true
+  cache_decision_ttl: 5m
+
+rate_limit:
+  enabled: false  # Disabled for development
+  backend: memory
+  redis_addr: ""
+  redis_password: ""
+  redis_db: 0
+  failure_mode: fail-open
+  global_limits:
+    - key: ip
+      limit: 1000
+      window: 1m
+      burst: 100
+
+routes:
+  - path_pattern: /api/v1/users
+    methods:
+      - GET
+      - POST
+    backend_url: http://localhost:3001
+    timeout: 10s
+    auth_policy: public
+    strip_prefix: ""
+
+  - path_pattern: /api/v1/orders
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+    backend_url: http://localhost:3002
+    timeout: 10s
+    auth_policy: public
+    strip_prefix: ""
+
+observability:
+  metrics_enabled: true
+  metrics_port: 9090
+  metrics_path: /metrics
+  health_path: /_health
+  readiness_path: /_health/ready
+  liveness_path: /_health/live
+  tracing_enabled: false
+  tracing_endpoint: ""
