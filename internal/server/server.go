@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"github.com/maltehedderich/api-gateway-go/internal/health"
 	"github.com/maltehedderich/api-gateway-go/internal/logger"
 	"github.com/maltehedderich/api-gateway-go/internal/middleware"
+	"github.com/maltehedderich/api-gateway-go/internal/proxy"
+	"github.com/maltehedderich/api-gateway-go/internal/router"
 )
 
 // Server represents the API Gateway server
@@ -21,14 +24,32 @@ type Server struct {
 	httpServer    *http.Server
 	httpsServer   *http.Server
 	healthManager *health.Manager
+	router        *router.Router
+	proxy         *proxy.Proxy
 	logger        *logger.ComponentLogger
 }
 
 // New creates a new server instance
 func New(cfg *config.Config, healthMgr *health.Manager) *Server {
+	// Create router
+	rtr := router.New()
+
+	// Load routes from configuration
+	if err := rtr.LoadRoutes(cfg.Routes); err != nil {
+		log := logger.Get().WithComponent("server")
+		log.Error("failed to load routes", logger.Fields{
+			"error": err.Error(),
+		})
+	}
+
+	// Create proxy with default configuration
+	prx := proxy.New(nil)
+
 	return &Server{
 		config:        cfg,
 		healthManager: healthMgr,
+		router:        rtr,
+		proxy:         prx,
 		logger:        logger.Get().WithComponent("server"),
 	}
 }
@@ -144,23 +165,62 @@ func (s *Server) setupRouter() http.Handler {
 // defaultHandler returns the default handler for non-health routes
 func (s *Server) defaultHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// For now, just return a simple response
-		// This will be replaced with actual routing in Phase 2
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		response := map[string]interface{}{
-			"message": "API Gateway is running",
-			"version": "1.0.0",
-			"path":    r.URL.Path,
-		}
+		// Try to match a route
+		match, err := s.router.Match(r)
 
 		correlationID := logger.GetCorrelationID(r.Context())
-		if correlationID != "" {
-			response["correlation_id"] = correlationID
+
+		if err != nil {
+			// No route found
+			s.logger.Debug("no route matched", logger.Fields{
+				"correlation_id": correlationID,
+				"method":         r.Method,
+				"path":           r.URL.Path,
+			})
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+
+			errorResp := map[string]interface{}{
+				"error":          "not_found",
+				"message":        "No route found for the requested path",
+				"correlation_id": correlationID,
+				"path":           r.URL.Path,
+				"method":         r.Method,
+			}
+
+			_ = json.NewEncoder(w).Encode(errorResp)
+			return
 		}
 
-		_ = middleware.WriteJSON(w, response)
+		// Forward request to backend
+		if err := s.proxy.Forward(w, r, match); err != nil {
+			s.logger.Error("proxy forward error", logger.Fields{
+				"correlation_id": correlationID,
+				"error":          err.Error(),
+				"backend_url":    match.Route.BackendURL,
+			})
+
+			// Check if response was already written
+			// If so, we can't write error response
+			w.Header().Set("Content-Type", "application/json")
+
+			// Determine appropriate status code based on error
+			statusCode := http.StatusBadGateway
+			if err.Error() == "circuit breaker open for backend "+match.Route.BackendURL {
+				statusCode = http.StatusServiceUnavailable
+			}
+
+			w.WriteHeader(statusCode)
+
+			errorResp := map[string]interface{}{
+				"error":          "gateway_error",
+				"message":        "Failed to forward request to backend service",
+				"correlation_id": correlationID,
+			}
+
+			_ = json.NewEncoder(w).Encode(errorResp)
+		}
 	}
 }
 
