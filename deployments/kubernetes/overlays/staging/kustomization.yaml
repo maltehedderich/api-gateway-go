@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: api-gateway-staging
+
+# Base
+bases:
+  - ../../
+
+# Override image tag for staging
+images:
+  - name: api-gateway
+    newName: ghcr.io/maltehedderich/api-gateway-go
+    newTag: staging
+
+# Staging-specific configuration
+configMapGenerator:
+  - name: api-gateway-env-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=staging
+      - GATEWAY_LOG_LEVEL=info
+
+# Patches for staging environment
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api-gateway
+    spec:
+      replicas: 3
+      template:
+        spec:
+          containers:
+          - name: gateway
+            env:
+            - name: GATEWAY_LOG_LEVEL
+              value: info
+            resources:
+              requests:
+                cpu: 500m
+                memory: 512Mi
+              limits:
+                cpu: 2000m
+                memory: 1Gi
+  - |-
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: api-gateway
+    spec:
+      minReplicas: 3
+      maxReplicas: 10

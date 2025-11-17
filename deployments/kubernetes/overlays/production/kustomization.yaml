@@ -1,0 +1,81 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: api-gateway-prod
+
+# Base
+bases:
+  - ../../
+
+# Override image tag for production (use specific version tags)
+images:
+  - name: api-gateway
+    newName: ghcr.io/maltehedderich/api-gateway-go
+    newTag: v1.0.0  # Update this with actual version
+
+# Production-specific configuration
+configMapGenerator:
+  - name: api-gateway-env-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=production
+      - GATEWAY_LOG_LEVEL=warn
+
+# Patches for production environment
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api-gateway
+    spec:
+      replicas: 5
+      template:
+        metadata:
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "9090"
+        spec:
+          containers:
+          - name: gateway
+            env:
+            - name: GATEWAY_LOG_LEVEL
+              value: warn
+            resources:
+              requests:
+                cpu: 1000m
+                memory: 1Gi
+              limits:
+                cpu: 4000m
+                memory: 2Gi
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                    - api-gateway
+                topologyKey: kubernetes.io/hostname
+  - |-
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: api-gateway
+    spec:
+      minReplicas: 5
+      maxReplicas: 30
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 60
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 75

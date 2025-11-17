@@ -1,0 +1,278 @@
+{
+  "dashboard": {
+    "title": "API Gateway Overview",
+    "tags": ["api-gateway", "gateway", "monitoring"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(gateway_http_requests_total[5m])) by (namespace)",
+            "legendFormat": "Total Requests/s",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(gateway_http_requests_total{status_code=~\"2..\"}[5m])) by (namespace)",
+            "legendFormat": "2xx Requests/s",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(gateway_http_requests_total{status_code=~\"4..\"}[5m])) by (namespace)",
+            "legendFormat": "4xx Requests/s",
+            "refId": "C"
+          },
+          {
+            "expr": "sum(rate(gateway_http_requests_total{status_code=~\"5..\"}[5m])) by (namespace)",
+            "legendFormat": "5xx Requests/s",
+            "refId": "D"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/s"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Error Rate",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(gateway_http_requests_total{status_code=~\"5..\"}[5m])) / sum(rate(gateway_http_requests_total[5m])) * 100",
+            "legendFormat": "5xx Error Rate %",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(gateway_http_requests_total{status_code=~\"4..\"}[5m])) / sum(rate(gateway_http_requests_total[5m])) * 100",
+            "legendFormat": "4xx Error Rate %",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "Error Rate"},
+          {"format": "short"}
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"params": [5], "type": "gt"},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]},
+              "reducer": {"params": [], "type": "avg"},
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "60s",
+          "handler": 1,
+          "name": "High Error Rate",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 3,
+        "title": "Request Latency (p50, p95, p99)",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(gateway_http_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(gateway_http_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "p95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(gateway_http_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "p99",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Latency"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Authorization Metrics",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(gateway_auth_attempts_total{result=\"success\"}[5m])) by (namespace)",
+            "legendFormat": "Success/s",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(gateway_auth_attempts_total{result=\"failure\"}[5m])) by (namespace)",
+            "legendFormat": "Failures/s",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(gateway_auth_attempts_total{result=\"bypass\"}[5m])) by (namespace)",
+            "legendFormat": "Bypass/s",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Operations/s"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Rate Limiting",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(gateway_ratelimit_exceeded_total[5m])) by (namespace)",
+            "legendFormat": "Rate Limited Requests/s",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(gateway_ratelimit_errors_total[5m])) by (namespace)",
+            "legendFormat": "Rate Limiter Errors/s",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Operations/s"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Backend Service Latency",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(gateway_backend_duration_seconds_bucket[5m])) by (le, backend_service))",
+            "legendFormat": "{{backend_service}} p95",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Latency"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Pod Status",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 24, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(kube_pod_status_ready{condition=\"true\", pod=~\"api-gateway-.*\"})",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "orientation": "auto",
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "yellow"},
+                {"value": 2, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "CPU Usage",
+        "type": "graph",
+        "gridPos": {"x": 6, "y": 24, "w": 9, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(container_cpu_usage_seconds_total{pod=~\"api-gateway-.*\"}[5m])) by (pod)",
+            "legendFormat": "{{pod}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "CPU Usage"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": {"x": 15, "y": 24, "w": 9, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(container_memory_working_set_bytes{pod=~\"api-gateway-.*\"}) by (pod)",
+            "legendFormat": "{{pod}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "bytes", "label": "Memory"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Request by Route",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(gateway_http_requests_total[5m])) by (route)",
+            "legendFormat": "{{route}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/s"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Backend Error Rate by Service",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(gateway_backend_requests_total{status_code=~\"5..\"}[5m])) by (backend_service) / sum(rate(gateway_backend_requests_total[5m])) by (backend_service) * 100",
+            "legendFormat": "{{backend_service}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "Error Rate"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}

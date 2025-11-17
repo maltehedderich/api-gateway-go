@@ -1,0 +1,53 @@
+# Kustomize base configuration
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: api-gateway
+
+# Common labels
+commonLabels:
+  app: api-gateway
+  managed-by: kustomize
+
+# Resources
+resources:
+  - rbac.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+
+# Images (override with kustomize edit set image)
+images:
+  - name: api-gateway
+    newName: ghcr.io/maltehedderich/api-gateway-go
+    newTag: latest
+
+# ConfigMap generator (for environment-specific configs)
+configMapGenerator:
+  - name: api-gateway-env-config
+    literals:
+      - ENVIRONMENT=production
+
+# Patches for production
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api-gateway
+    spec:
+      replicas: 5
+      template:
+        spec:
+          containers:
+          - name: gateway
+            resources:
+              requests:
+                cpu: 1000m
+                memory: 1Gi
+              limits:
+                cpu: 4000m
+                memory: 2Gi
