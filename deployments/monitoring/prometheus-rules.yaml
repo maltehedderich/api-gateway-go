@@ -1,0 +1,268 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: api-gateway-alerts
+  namespace: default
+  labels:
+    app: api-gateway
+    component: gateway
+    prometheus: kube-prometheus
+spec:
+  groups:
+  - name: api-gateway.availability
+    interval: 30s
+    rules:
+    # API Gateway is down
+    - alert: APIGatewayDown
+      expr: up{job="api-gateway"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: api-gateway
+      annotations:
+        summary: "API Gateway instance is down"
+        description: "API Gateway instance {{ $labels.pod }} has been down for more than 2 minutes."
+        runbook_url: "https://runbooks.example.com/api-gateway/down"
+
+    # High error rate
+    - alert: APIGatewayHighErrorRate
+      expr: |
+        (
+          sum(rate(gateway_http_requests_total{status_code=~"5.."}[5m])) by (namespace)
+          /
+          sum(rate(gateway_http_requests_total[5m])) by (namespace)
+        ) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+        component: api-gateway
+      annotations:
+        summary: "High error rate in API Gateway"
+        description: "API Gateway error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-error-rate"
+
+    # Pod restart rate
+    - alert: APIGatewayHighRestartRate
+      expr: |
+        rate(kube_pod_container_status_restarts_total{pod=~"api-gateway-.*"}[15m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "API Gateway pod is restarting frequently"
+        description: "API Gateway pod {{ $labels.pod }} has restarted {{ $value }} times in the last 15 minutes."
+        runbook_url: "https://runbooks.example.com/api-gateway/high-restart-rate"
+
+  - name: api-gateway.performance
+    interval: 30s
+    rules:
+    # High latency
+    - alert: APIGatewayHighLatency
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(gateway_http_request_duration_seconds_bucket[5m])) by (le, namespace)
+        ) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "API Gateway high latency detected"
+        description: "API Gateway p95 latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-latency"
+
+    # Very high latency (critical)
+    - alert: APIGatewayVeryHighLatency
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(gateway_http_request_duration_seconds_bucket[5m])) by (le, namespace)
+        ) > 1.0
+      for: 5m
+      labels:
+        severity: critical
+        component: api-gateway
+      annotations:
+        summary: "API Gateway very high latency detected"
+        description: "API Gateway p95 latency is {{ $value | humanizeDuration }} (threshold: 1s)"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-latency"
+
+    # High request rate
+    - alert: APIGatewayHighRequestRate
+      expr: |
+        sum(rate(gateway_http_requests_total[5m])) by (namespace) > 10000
+      for: 10m
+      labels:
+        severity: info
+        component: api-gateway
+      annotations:
+        summary: "API Gateway experiencing high request rate"
+        description: "API Gateway is handling {{ $value | humanize }} requests/second"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-request-rate"
+
+  - name: api-gateway.authorization
+    interval: 30s
+    rules:
+    # High authorization failure rate
+    - alert: APIGatewayHighAuthFailureRate
+      expr: |
+        (
+          sum(rate(gateway_auth_attempts_total{result="failure"}[5m])) by (namespace)
+          /
+          sum(rate(gateway_auth_attempts_total[5m])) by (namespace)
+        ) > 0.2
+      for: 10m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "High authorization failure rate"
+        description: "Authorization failure rate is {{ $value | humanizePercentage }} (threshold: 20%)"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-auth-failure"
+
+    # Token validation failures
+    - alert: APIGatewayTokenValidationErrors
+      expr: |
+        sum(rate(gateway_auth_token_validation_errors_total[5m])) by (namespace, error_type) > 10
+      for: 5m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "Token validation errors detected"
+        description: "Token validation errors ({{ $labels.error_type }}) at {{ $value | humanize }} errors/second"
+        runbook_url: "https://runbooks.example.com/api-gateway/token-validation-errors"
+
+  - name: api-gateway.ratelimit
+    interval: 30s
+    rules:
+    # High rate limit exceeded events
+    - alert: APIGatewayHighRateLimitExceeded
+      expr: |
+        sum(rate(gateway_ratelimit_exceeded_total[5m])) by (namespace) > 100
+      for: 10m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "High rate of rate limit exceeded events"
+        description: "Rate limit exceeded events at {{ $value | humanize }} events/second"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-rate-limit"
+
+    # Rate limiter errors
+    - alert: APIGatewayRateLimiterErrors
+      expr: |
+        sum(rate(gateway_ratelimit_errors_total[5m])) by (namespace) > 1
+      for: 5m
+      labels:
+        severity: critical
+        component: api-gateway
+      annotations:
+        summary: "Rate limiter experiencing errors"
+        description: "Rate limiter errors at {{ $value | humanize }} errors/second. This may indicate Redis connectivity issues."
+        runbook_url: "https://runbooks.example.com/api-gateway/rate-limiter-errors"
+
+  - name: api-gateway.backend
+    interval: 30s
+    rules:
+    # Backend service errors
+    - alert: APIGatewayBackendErrors
+      expr: |
+        (
+          sum(rate(gateway_backend_requests_total{status_code=~"5.."}[5m])) by (namespace, backend_service)
+          /
+          sum(rate(gateway_backend_requests_total[5m])) by (namespace, backend_service)
+        ) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "High backend error rate for {{ $labels.backend_service }}"
+        description: "Backend {{ $labels.backend_service }} error rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+        runbook_url: "https://runbooks.example.com/api-gateway/backend-errors"
+
+    # Backend high latency
+    - alert: APIGatewayBackendHighLatency
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(gateway_backend_duration_seconds_bucket[5m])) by (le, namespace, backend_service)
+        ) > 1.0
+      for: 10m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "High backend latency for {{ $labels.backend_service }}"
+        description: "Backend {{ $labels.backend_service }} p95 latency is {{ $value | humanizeDuration }}"
+        runbook_url: "https://runbooks.example.com/api-gateway/backend-high-latency"
+
+    # Circuit breaker open
+    - alert: APIGatewayCircuitBreakerOpen
+      expr: gateway_circuit_breaker_state{state="open"} > 0
+      for: 2m
+      labels:
+        severity: critical
+        component: api-gateway
+      annotations:
+        summary: "Circuit breaker open for {{ $labels.backend_service }}"
+        description: "Circuit breaker for {{ $labels.backend_service }} has been open for more than 2 minutes."
+        runbook_url: "https://runbooks.example.com/api-gateway/circuit-breaker-open"
+
+  - name: api-gateway.resources
+    interval: 30s
+    rules:
+    # High CPU usage
+    - alert: APIGatewayHighCPU
+      expr: |
+        sum(rate(container_cpu_usage_seconds_total{pod=~"api-gateway-.*"}[5m])) by (pod) > 1.5
+      for: 10m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "API Gateway pod {{ $labels.pod }} high CPU usage"
+        description: "CPU usage is {{ $value | humanize }} cores (threshold: 1.5 cores)"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-cpu"
+
+    # High memory usage
+    - alert: APIGatewayHighMemory
+      expr: |
+        sum(container_memory_working_set_bytes{pod=~"api-gateway-.*"}) by (pod) > 800 * 1024 * 1024
+      for: 10m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "API Gateway pod {{ $labels.pod }} high memory usage"
+        description: "Memory usage is {{ $value | humanizeBytes }} (threshold: 800MB)"
+        runbook_url: "https://runbooks.example.com/api-gateway/high-memory"
+
+    # Pod not ready
+    - alert: APIGatewayPodNotReady
+      expr: |
+        sum by (pod) (kube_pod_status_ready{condition="false", pod=~"api-gateway-.*"}) > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: api-gateway
+      annotations:
+        summary: "API Gateway pod {{ $labels.pod }} not ready"
+        description: "Pod has been not ready for more than 5 minutes."
+        runbook_url: "https://runbooks.example.com/api-gateway/pod-not-ready"
+
+  - name: api-gateway.redis
+    interval: 30s
+    rules:
+    # Redis connectivity issues
+    - alert: APIGatewayRedisConnectivityIssues
+      expr: |
+        sum(rate(gateway_redis_errors_total[5m])) by (namespace) > 5
+      for: 5m
+      labels:
+        severity: critical
+        component: api-gateway
+      annotations:
+        summary: "Redis connectivity issues detected"
+        description: "Redis errors at {{ $value | humanize }} errors/second. Rate limiting may be impacted."
+        runbook_url: "https://runbooks.example.com/api-gateway/redis-connectivity"

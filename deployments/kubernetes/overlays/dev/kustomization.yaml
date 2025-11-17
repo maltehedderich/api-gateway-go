@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: api-gateway-dev
+
+# Base
+bases:
+  - ../../
+
+# Override image tag for dev
+images:
+  - name: api-gateway
+    newName: ghcr.io/maltehedderich/api-gateway-go
+    newTag: latest
+
+# Dev-specific configuration
+configMapGenerator:
+  - name: api-gateway-env-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=development
+      - GATEWAY_LOG_LEVEL=debug
+
+# Patches for dev environment
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api-gateway
+    spec:
+      replicas: 2
+      template:
+        spec:
+          containers:
+          - name: gateway
+            env:
+            - name: GATEWAY_LOG_LEVEL
+              value: debug
+            resources:
+              requests:
+                cpu: 250m
+                memory: 256Mi
+              limits:
+                cpu: 1000m
+                memory: 512Mi
+  - |-
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: api-gateway
+    spec:
+      minReplicas: 2
+      maxReplicas: 5
