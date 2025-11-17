@@ -13,7 +13,7 @@ The API Gateway must provide:
    - Support configurable logging levels (e.g., error, info, debug).
    - Consider structured logging for downstream processing (e.g., JSON logs).
 
-2. **Authorization via session tokens**
+2. **Authorization via session cookies**
 
    - Use a session token mechanism for authenticating and authorizing requests.
    - Describe how session tokens are:
