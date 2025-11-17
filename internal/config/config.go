@@ -69,13 +69,15 @@ type AuthorizationConfig struct {
 
 // RateLimitConfig contains rate limiting configuration
 type RateLimitConfig struct {
-	Enabled      bool              `yaml:"enabled" json:"enabled"`
-	Backend      string            `yaml:"backend" json:"backend"` // memory or redis
-	RedisAddr    string            `yaml:"redis_addr" json:"redis_addr"`
-	RedisPassword string           `yaml:"redis_password" json:"redis_password"`
-	RedisDB      int               `yaml:"redis_db" json:"redis_db"`
-	FailureMode  string            `yaml:"failure_mode" json:"failure_mode"` // fail-open or fail-closed
-	GlobalLimits []LimitDefinition `yaml:"global_limits" json:"global_limits"`
+	Enabled        bool              `yaml:"enabled" json:"enabled"`
+	Backend        string            `yaml:"backend" json:"backend"` // memory, redis, or dynamodb
+	RedisAddr      string            `yaml:"redis_addr" json:"redis_addr"`
+	RedisPassword  string            `yaml:"redis_password" json:"redis_password"`
+	RedisDB        int               `yaml:"redis_db" json:"redis_db"`
+	DynamoDBTable  string            `yaml:"dynamodb_table" json:"dynamodb_table"`   // DynamoDB table name
+	DynamoDBRegion string            `yaml:"dynamodb_region" json:"dynamodb_region"` // AWS region
+	FailureMode    string            `yaml:"failure_mode" json:"failure_mode"`       // fail-open or fail-closed
+	GlobalLimits   []LimitDefinition `yaml:"global_limits" json:"global_limits"`
 }
 
 // LimitDefinition defines a rate limit
@@ -328,11 +330,20 @@ func (c *Config) Validate() error {
 
 	// Validate rate limit config
 	if c.RateLimit.Enabled {
-		if c.RateLimit.Backend != "memory" && c.RateLimit.Backend != "redis" {
-			return fmt.Errorf("invalid rate limit backend: %s (must be 'memory' or 'redis')", c.RateLimit.Backend)
+		validBackends := map[string]bool{"memory": true, "redis": true, "dynamodb": true}
+		if !validBackends[c.RateLimit.Backend] {
+			return fmt.Errorf("invalid rate limit backend: %s (must be 'memory', 'redis', or 'dynamodb')", c.RateLimit.Backend)
 		}
 		if c.RateLimit.Backend == "redis" && c.RateLimit.RedisAddr == "" {
 			return fmt.Errorf("rate limit backend is redis but redis address not specified")
+		}
+		if c.RateLimit.Backend == "dynamodb" {
+			if c.RateLimit.DynamoDBTable == "" {
+				return fmt.Errorf("rate limit backend is dynamodb but table name not specified")
+			}
+			if c.RateLimit.DynamoDBRegion == "" {
+				return fmt.Errorf("rate limit backend is dynamodb but region not specified")
+			}
 		}
 		if c.RateLimit.FailureMode != "fail-open" && c.RateLimit.FailureMode != "fail-closed" {
 			return fmt.Errorf("invalid failure mode: %s (must be 'fail-open' or 'fail-closed')", c.RateLimit.FailureMode)

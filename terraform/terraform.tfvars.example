@@ -1,0 +1,50 @@
+# Example Terraform Variables
+# Copy this file to terraform.tfvars and customize for your deployment
+
+# AWS Configuration
+aws_region   = "us-east-1"
+environment  = "dev"
+project_name = "api-gateway"
+
+# Lambda Configuration
+# IMPORTANT: Build and push Docker image first using terraform/build-and-push.sh
+# Then update this with your ECR image URI
+lambda_image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/api-gateway:latest"
+
+# Lambda Configuration
+lambda_memory_size      = 512   # MB (128-10240)
+lambda_timeout          = 30    # seconds (max 900)
+lambda_log_retention_days = 7   # CloudWatch log retention
+
+# DynamoDB Configuration
+dynamodb_billing_mode   = "PAY_PER_REQUEST"  # or "PROVISIONED"
+# Only needed for PROVISIONED mode:
+# dynamodb_read_capacity  = 5
+# dynamodb_write_capacity = 5
+
+# Backend Service URLs
+# IMPORTANT: Replace these with your actual backend service URLs
+backend_users_url  = "https://users-api.example.com"
+backend_orders_url = "https://orders-api.example.com"
+
+# Gateway Configuration
+log_level            = "info"          # debug, info, warn, error
+enable_authorization = false           # Set to true to enable JWT auth
+enable_rate_limiting = true            # Enable DynamoDB-backed rate limiting
+
+# JWT Configuration (required if enable_authorization = true)
+# IMPORTANT: Use AWS Secrets Manager or parameter store in production!
+# jwt_shared_secret = "your-secret-key-here"
+
+# Custom Domain (Optional)
+enable_custom_domain = false
+# If enabling custom domain, uncomment and configure:
+# domain_name      = "api.example.com"
+# route53_zone_id  = "Z1234567890ABC"
+
+# Additional Tags
+tags = {
+  Owner       = "DevOps Team"
+  CostCenter  = "Engineering"
+  Terraform   = "true"
+}

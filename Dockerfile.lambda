@@ -1,0 +1,57 @@
+# Lambda-Compatible Dockerfile
+# Uses AWS Lambda Web Adapter to wrap the HTTP server for Lambda runtime
+
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make ca-certificates
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+# CGO_ENABLED=0 for static binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s -X main.version=lambda-$(date +%Y%m%d) -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" \
+    -o /app/bin/gateway \
+    ./cmd/gateway
+
+# Runtime stage - AWS Lambda base image
+FROM public.ecr.aws/lambda/provided:al2023
+
+# Copy binary from builder
+COPY --from=builder /app/bin/gateway ${LAMBDA_TASK_ROOT}/gateway
+
+# Copy default configs (can be overridden by env vars)
+COPY --from=builder /app/configs ${LAMBDA_TASK_ROOT}/configs
+
+# Install AWS Lambda Web Adapter
+# This allows the HTTP server to work with Lambda's invoke model
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.1 /lambda-adapter /opt/extensions/lambda-adapter
+
+# Environment variables for Lambda Web Adapter
+ENV PORT=8080
+ENV AWS_LWA_ENABLE_COMPRESSION=true
+ENV AWS_LWA_INVOKE_MODE=response_stream
+ENV READINESS_CHECK_PATH=/_health/ready
+ENV READINESS_CHECK_PORT=8080
+
+# Gateway configuration via environment variables
+# These will be set by Terraform
+ENV GATEWAY_HTTP_PORT=8080
+ENV GATEWAY_LOG_FORMAT=json
+ENV GATEWAY_LOG_LEVEL=info
+
+# Lambda handler
+# The Lambda Web Adapter will start the gateway binary and proxy requests to it
+CMD ["sh", "-c", "/var/task/gateway -config /var/task/configs/config.dev.yaml & wait"]

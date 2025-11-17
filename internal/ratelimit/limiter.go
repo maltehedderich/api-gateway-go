@@ -34,6 +34,12 @@ func NewLimiter(cfg *config.RateLimitConfig) (*Limiter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Redis storage: %w", err)
 		}
+	case "dynamodb":
+		// DynamoDB backend for serverless deployments
+		storage, err = NewDynamoDBStorage(cfg.DynamoDBTable, cfg.DynamoDBRegion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DynamoDB storage: %w", err)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported storage backend: %s", cfg.Backend)
 	}
