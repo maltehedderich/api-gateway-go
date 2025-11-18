@@ -1,5 +1,10 @@
 # API Gateway
 
+> [!WARNING]
+> **EXPERIMENTAL CODE - NOT PRODUCTION READY**
+>
+> All code in this repository was generated as an experiment with Claude Code Web and **MUST BE CAREFULLY REVIEWED** before any use in production environments. This is a proof-of-concept and has not undergone the necessary security audits, testing, and validation required for production deployment.
+
 A high-performance API Gateway written in Go that provides essential cross-cutting concerns including request logging, session-based authorization, and rate limiting to protect backend services.
 
 ## Overview
